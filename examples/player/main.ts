@@ -826,6 +826,11 @@ function updateStatsOverlay(): void {
     const resStr = res ? `${res.width}x${res.height}` : '--';
     const fps = s.playbackDurationMs > 0 ? ((s.framesRendered / s.playbackDurationMs) * 1000).toFixed(1) : '0';
     const throughput = s.sessionAgeMs > 0 ? (s.bytesReceived * 8) / (s.sessionAgeMs / 1000) : 0;
+    // The effective post-slew cushion, not the configured ?cushion= floor: with
+    // a low floor the adaptive component is what holds it up. Cast because
+    // renderCushionMs is in @moqt/player src but not its stale dist, and Vite
+    // resolves the workspace package to src.
+    const cushionStr = `${(s as { renderCushionMs?: number | null }).renderCushionMs?.toFixed(0) ?? '--'} ms`;
 
     const healthClass = s.stallCount === 0 && s.decodeErrorCount === 0 ? 'good'
         : s.stallCount > 3 || s.decodeErrorCount > 3 ? 'bad' : 'warn';
@@ -838,6 +843,7 @@ function updateStatsOverlay(): void {
         ${statRow('TTFF', ttffStr, 'highlight')}
         ${statRow('Session', formatDuration(s.sessionAgeMs))}
         ${statRow('Playing', formatDuration(s.playbackDurationMs))}
+        ${statRow('Cushion', cushionStr, 'highlight')}
         ${s.ttffBreakdown ? renderTTFFBar(s.ttffBreakdown) : ''}
       </div>
       <div class="stats-section">
@@ -1044,6 +1050,20 @@ async function startPlayback(): Promise<void> {
 
     const lateMs = params.get('late') ? parseInt(params.get('late')!, 10) : undefined;
     const gapMs = params.get('gap') ? parseInt(params.get('gap')!, 10) : undefined;
+    // ?cushion=<ms> — static floor of the playout cushion, added to every render
+    // time. Unset falls back to the handshake-RTT heuristic, which buckets even
+    // loopback at 200 ms. Sweep it to find where jitter starts costing stutter.
+    const playoutCushionFloorMs = params.get('cushion')
+        ? parseInt(params.get('cushion')!, 10) : undefined;
+    // ?cushionmax=<ms> — cap for the same cushion (default 750). With a low floor
+    // the adaptive gap-timeout EMA is what sets latency; capping bounds how far
+    // jitter spikes can ratchet it up.
+    const playoutCushionMaxMs = params.get('cushionmax')
+        ? parseInt(params.get('cushionmax')!, 10) : undefined;
+    if (playoutCushionFloorMs !== undefined || playoutCushionMaxMs !== undefined)
+        log(`[cushion] floor=${playoutCushionFloorMs ?? 'RTT heuristic (50 or 200)'} ms `
+            + `max=${playoutCushionMaxMs ?? '750 (default)'} ms -> effective cushion is `
+            + `clamp(max(adaptive gap EMA, floor), floor, max)`);
     const preferSoftwareDecoder = params.get('swdec') === '1';
     // ?mse=auto|managed|standard — which MediaSource implementation to use.
     // `auto` (default) and `managed` prefer ManagedMediaSource where the browser
@@ -1114,6 +1134,8 @@ async function startPlayback(): Promise<void> {
         ...(prefetched ? { catalog: prefetched.catalog, connection: prefetched.connection } : {}),
         ...(lateMs ? { lateFrameThresholdMs: lateMs } : {}),
         ...(gapMs ? { gapTimeoutMs: gapMs } : {}),
+        ...(playoutCushionFloorMs !== undefined ? { playoutCushionFloorMs } : {}),
+        ...(playoutCushionMaxMs !== undefined ? { playoutCushionMaxMs } : {}),
         createTransport: createWebTransport({ ...(certHash ? { certHash } : {}), ...(draftVersion ? { draftVersion } : {}) }),
         createConnection: () => new MoqtConnection(draftVersion),
         createVideoDecoder: () => new WebCodecsVideoDecoder({ preferSoftwareDecoder }),

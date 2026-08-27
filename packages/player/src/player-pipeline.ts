@@ -131,16 +131,32 @@ export interface RecoveryCallbacks {
  * persists until the next audio anchor/underrun/reset.
  *
  * `max(adaptive, static)`: the adaptive component is the video pipeline's
- * effective gap timeout (arrival-jitter EMA); the static floor is 200 ms,
- * or 50 ms when the WebTransport handshake RTT is under 5 ms (LAN/loopback).
+ * effective gap timeout (arrival-jitter EMA); the static floor comes from
+ * {@link cushionFloorUsFor}.
  */
 export function computePlaybackDelayUs(
   effectiveGapTimeoutUs: number | undefined,
   handshakeRttMs: number | undefined,
+  floorOverrideMs?: number,
 ): number {
-  const staticDelayUs = handshakeRttMs !== undefined && handshakeRttMs < 5
-    ? 50_000 : 200_000;
-  return Math.max(effectiveGapTimeoutUs ?? 0, staticDelayUs);
+  return Math.max(
+    effectiveGapTimeoutUs ?? 0,
+    cushionFloorUsFor(handshakeRttMs, floorOverrideMs),
+  );
+}
+
+/**
+ * The static cushion floor (µs): `config.playoutCushionFloorMs` when set,
+ * otherwise the handshake-RTT heuristic (50 ms under 5 ms RTT, else 200 ms).
+ * Shared by the smoother's floor and the stats gauge so an override cannot
+ * apply to one and not the other.
+ */
+export function cushionFloorUsFor(
+  handshakeRttMs: number | undefined,
+  floorOverrideMs?: number,
+): number {
+  if (floorOverrideMs !== undefined) return floorOverrideMs * 1000;
+  return handshakeRttMs !== undefined && handshakeRttMs < 5 ? 50_000 : 200_000;
 }
 
 // ─── createPipelines ─────────────────────────────────────────────────
@@ -224,9 +240,14 @@ export function createPipelines(
   // scheduling. Gap detection continues to use the raw value.
   const hasLoc = (trackInfo.video !== undefined && !hasCmafVideo)
     || (trackInfo.audio !== undefined && !hasCmafAudio);
-  const cushionFloorUs = handshakeRttMs !== undefined && handshakeRttMs < 5
-    ? 50_000 : 200_000;
-  const renderCushion = hasLoc ? new RenderCushionSmoother({ floorUs: cushionFloorUs }, clock) : null;
+  const cushionFloorUs = cushionFloorUsFor(handshakeRttMs, config.playoutCushionFloorMs);
+  const renderCushion = hasLoc
+    ? new RenderCushionSmoother(defined({
+        floorUs: cushionFloorUs,
+        maxUs: config.playoutCushionMaxMs !== undefined
+          ? config.playoutCushionMaxMs * 1000 : undefined,
+      }), clock)
+    : null;
 
   if (videoDecoder || audioDecoder) {
     commandDispatcher = new CommandDispatcher(defined({

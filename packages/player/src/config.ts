@@ -354,6 +354,27 @@ export interface LatencyConfig {
    * @see draft-ietf-moq-msf-00 §5.1.16 (targetLatency)
    */
   readonly catchUpRecoveryMs?: number;
+
+  /**
+   * Static floor for the shared playout cushion, in milliseconds.
+   * Default: derived from the handshake RTT — 50ms under 5ms RTT, else 200ms.
+   * The cushion is added to every video render time and to audio scheduling, so
+   * lowering it trades end-to-end latency for jitter tolerance: too low and
+   * frames get scheduled in the past, causing stutter or drops. Worth setting
+   * explicitly, since `handshakeRttMs` times the whole WebTransport connect
+   * rather than a round trip and even loopback lands in the 200ms bucket.
+   */
+  readonly playoutCushionFloorMs?: number;
+
+  /**
+   * Cap for the shared playout cushion, in milliseconds.
+   * Default: 750ms (`RENDER_CUSHION_MAX_US`).
+   * With a low floor the adaptive gap-timeout EMA is what sets the cushion, and
+   * `RenderCushionSmoother` rises 4x faster than it decays, so jitter spikes
+   * ratchet it up; this bounds how far. Gap detection is unaffected — it keeps
+   * consuming the raw adaptive timeout.
+   */
+  readonly playoutCushionMaxMs?: number;
 }
 
 /** Quality / ABR options. */

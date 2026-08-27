@@ -976,7 +976,8 @@ export class MoqtPlayer {
     const gapUs = this.videoPipeline?.effectiveGapTimeoutUs;
     const locGauges = gapUs !== undefined ? {
       videoEffectiveGapTimeoutMs: gapUs / 1000, // raw adaptive fuse
-      renderCushionMs: (this.getRenderCushionUs?.() ?? computePlaybackDelayUs(gapUs, this._handshakeRttMs)) / 1000,
+      renderCushionMs: (this.getRenderCushionUs?.()
+        ?? computePlaybackDelayUs(gapUs, this._handshakeRttMs, this.config.playoutCushionFloorMs)) / 1000,
     } : undefined;
     return Object.freeze(this._stats.snapshot(locGauges));
   }
